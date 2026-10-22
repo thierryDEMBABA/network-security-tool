@@ -31,3 +31,6 @@ jobs:
 
       - name: Security scan with Bandit
         run: python -m bandit -r network_check.py
+        
+      - name: compile all files
+        run: python -m compileall -q network_check.py
