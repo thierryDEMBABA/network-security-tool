@@ -1,5 +1,28 @@
 # TP 2 — GitHub Actions : réponses
 
+## Livrables
+
+| # | Livrable | Lien / fichier |
+|---|---|---|
+| 1 | Dépôt GitHub | https://github.com/thierryDEMBABA/network-security-tool |
+| 2 | Pull Request `feature/ci-pipeline` → `main` (fusionnée) | https://github.com/thierryDEMBABA/network-security-tool/pull/2 |
+| 3 | Capture d'un pipeline réussi | [assets/img/pipeline-reussi.png](assets/img/pipeline-reussi.png) |
+| 4 | Capture du pipeline volontairement échoué | [assets/img/pipeline-echec.png](assets/img/pipeline-echec.png) |
+| 5 | Réponses aux cinq questions | Ce fichier (sections ci-dessous) |
+| 6 | Fichiers du projet | [network_check.py](network_check.py), [requirements-dev.txt](requirements-dev.txt), [tests/test_network_check.py](tests/test_network_check.py), [.github/workflows/ci.yml](.github/workflows/ci.yml) |
+
+### Pipeline réussi
+
+Historique des runs du workflow *Python CI and Security* : les runs #1, #3 et #4 sont verts. Le run #2 correspond à l'échec volontaire de la partie 5.
+
+![Pipeline réussi](assets/img/pipeline-reussi.png)
+
+### Pipeline volontairement échoué
+
+Run #2, commit `d602a11` *Demonstrate failing CI test* : l'étape **Run unit tests** échoue sur `test_valid_port` (`assert True is False`), et l'étape **Security scan with Bandit** est sautée.
+
+![Pipeline échoué](assets/img/pipeline-echec.png)
+
 ## Question 1 : Pourquoi les tests ne dépendent-ils pas de l'ouverture réelle du port 443 ?
 
 `test_valid_port` et `test_invalid_port` testent uniquement `is_valid_port()`, une fonction de pure logique qui vérifie le type et la plage `1–65535` sans aucun accès réseau.
