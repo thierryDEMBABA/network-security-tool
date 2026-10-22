@@ -1,0 +1,33 @@
+name: Python CI and Security
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Check syntax
+        run: python -m compileall -q network_check.py
+
+      - name: Run unit tests
+        run: python -m pytest -v
+
+      - name: Security scan with Bandit
+        run: python -m bandit -r network_check.py
