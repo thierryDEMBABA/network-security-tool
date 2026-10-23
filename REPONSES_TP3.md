@@ -135,11 +135,13 @@ Un job `scan` est lancé pour chaque service (matrice `api` / `frontend`, `fail-
 | `Checkout repository` | `actions/checkout` épinglée sur le **SHA de commit** de la v7.0.1, et non sur un tag qu'on peut déplacer |
 | `Build … image` | `docker build -t netsecure-<service>:ci ./<service>` |
 | `Install Trivy` | Téléchargement de la **release officielle 0.76.1** (version fixée), puis **vérification de l'empreinte SHA-256** publiée dans `trivy_0.76.1_checksums.txt` avant extraction. Si l'archive a été altérée, `sha256sum --check` échoue et le job s'arrête. |
-| `Scan image` | `trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-api:ci` : échoue dès qu'une vulnérabilité HIGH ou CRITICAL est trouvée |
+| `Scan image` | `trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-${{ matrix.service }}:ci` : échoue dès qu'une vulnérabilité HIGH ou CRITICAL est trouvée dans l'image du job |
 
 La permission `contents: read` applique le principe du moindre privilège.
 
-### Résultat observé (run #1, commit `a6e6563`, push sur `feature/netsecure`)
+### Premier run (run #1, commit `a6e6563`, push sur `feature/netsecure`)
+
+Dans cette première version, la commande de scan était écrite en dur avec `netsecure-api:ci`, pour les deux jobs de la matrice.
 
 ![Run du workflow en échec](assets/img/ci-trivy-run-echec.png)
 
@@ -153,7 +155,21 @@ La permission `contents: read` applique le principe du moindre privilège.
 
 Le résultat de la CI est **identique au scan local** de `netsecure-api:hardened` (44 HIGH, 0 CRITICAL, Debian 13.7). Le scan est donc reproductible.
 
-**Correction à apporter au job `frontend`** : chaque job de la matrice doit scanner l'image qu'il vient de construire, avec `netsecure-${{ matrix.service }}:ci` au lieu de `netsecure-api:ci`. En local, `netsecure-frontend:hardened` ne contient aucune vulnérabilité HIGH/CRITICAL : une fois cette correction faite, le job frontend passerait au vert.
+### Après correction (run #4, commit `362c2c9`)
+
+**Correction appliquée** : chaque job de la matrice scanne désormais l'image qu'il vient de construire, avec `netsecure-${{ matrix.service }}:ci` au lieu de `netsecure-api:ci`.
+
+| Job | Étape `Scan image` | Résultat Trivy | Code de sortie |
+|---|---|---|---|
+| `scan (frontend)` | ✅ succès | `netsecure-frontend:ci` (Alpine 3.24.2) : **0** vulnérabilité HIGH/CRITICAL | 0 |
+| `scan (api)` | ❌ échec | `netsecure-api:ci` (Debian 13.7) : **44 HIGH**, 0 CRITICAL | 1 |
+
+![Job frontend réussi : 0 vulnérabilité](assets/img/ci-trivy-frontend-succes.png)
+![Job API en échec : Process completed with exit code 1](assets/img/ci-trivy-api-exit-code.png)
+
+Les deux jobs donnent maintenant le résultat attendu, identique aux scans locaux des images durcies :
+- **le job frontend réussit** parce que l'image ne contient **aucune vulnérabilité HIGH ou CRITICAL**. Trivy termine donc avec le code 0, malgré `--exit-code 1`. Les avertissements `Unable to get vulnerability details` visibles dans le log concernent `CVE-2026-107891`, dont la base Trivy n'a pas encore les détails : ils ne font pas échouer le scan ;
+- **le job API échoue** à cause des 44 HIGH du socle Debian. Trivy termine avec le code 1 (`Error: Process completed with exit code 1.`), donc l'étape, le job et le run passent au rouge.
 
 ### Pourquoi un scan en échec bloque la suite du pipeline
 
@@ -264,7 +280,7 @@ En CI, c'est indispensable, car un pipeline ne lit pas les rapports : **il ne re
 | Fichier workflow | [.github/workflows/security-scan.yml](.github/workflows/security-scan.yml) |
 | Résultats Trivy avant | [trivy-api-avant-resume.png](assets/img/trivy-api-avant-resume.png), [trivy-api-avant-detail.png](assets/img/trivy-api-avant-detail.png), [trivy-frontend-avant.png](assets/img/trivy-frontend-avant.png), [docs/trivy/api-avant.txt](docs/trivy/api-avant.txt) |
 | Résultats Trivy après | [trivy-api-apres-resume.png](assets/img/trivy-api-apres-resume.png), [trivy-api-apres-detail.png](assets/img/trivy-api-apres-detail.png), [trivy-frontend-apres.png](assets/img/trivy-frontend-apres.png), [docs/trivy/api-apres.txt](docs/trivy/api-apres.txt), [docs/trivy/frontend-apres.txt](docs/trivy/frontend-apres.txt) |
-| Résultats du pipeline CI | [ci-trivy-run-echec.png](assets/img/ci-trivy-run-echec.png), [ci-trivy-api-resume.png](assets/img/ci-trivy-api-resume.png), [ci-trivy-api-detail.png](assets/img/ci-trivy-api-detail.png) |
+| Résultats du pipeline CI | [ci-trivy-run-echec.png](assets/img/ci-trivy-run-echec.png), [ci-trivy-api-resume.png](assets/img/ci-trivy-api-resume.png), [ci-trivy-api-detail.png](assets/img/ci-trivy-api-detail.png), [ci-trivy-frontend-succes.png](assets/img/ci-trivy-frontend-succes.png), [ci-trivy-api-exit-code.png](assets/img/ci-trivy-api-exit-code.png) |
 | Analyse des changements | Partie 3 de ce document |
 | Réponses aux huit questions | Partie 5 de ce document |
 
