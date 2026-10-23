@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NetSecure</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --ok: #22c55e; --ko: #ef4444; --accent: #3b82f6; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+    main { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+    h1 { margin: 0 0 4px; }
+    p.sub { margin: 0 0 24px; color: var(--muted); }
+    .card { background: var(--card); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    button { background: var(--accent); color: white; border: 0; border-radius: 6px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+    button:disabled { opacity: .6; cursor: wait; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #334155; }
+    th { color: var(--muted); font-weight: 500; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .open { background: rgba(34,197,94,.15); color: var(--ok); }
+    .closed { background: rgba(239,68,68,.15); color: var(--ko); }
+    #health { font-size: 14px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>NetSecure</h1>
+  <p class="sub">Supervision des services du réseau interne</p>
+
+  <div class="card row">
+    <span id="health">Vérification de l'API…</span>
+    <button id="run">Lancer une vérification</button>
+  </div>
+
+  <div class="card">
+    <h2>Derniers contrôles</h2>
+    <table>
+      <thead><tr><th>Service</th><th>Cible</th><th>État</th><th>Date</th></tr></thead>
+      <tbody id="checks"><tr><td colspan="4">Aucun contrôle pour le moment.</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const tbody = document.getElementById("checks");
+  const healthEl = document.getElementById("health");
+  const runBtn = document.getElementById("run");
+
+  function render(rows) {
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="4">Aucun contrôle pour le moment.</td></tr>';
+      return;
+    }
+    tbody.replaceChildren(...rows.map(r => {
+      const tr = document.createElement("tr");
+      const cells = [r.name, `${r.host}:${r.port}`, null, new Date(r.checked_at).toLocaleString("fr-FR")];
+      cells.forEach((text, i) => {
+        const td = document.createElement("td");
+        if (i === 2) {
+          const badge = document.createElement("span");
+          badge.className = "badge " + (r.is_open ? "open" : "closed");
+          badge.textContent = r.is_open ? "Ouvert" : "Fermé";
+          td.appendChild(badge);
+        } else {
+          td.textContent = text;
+        }
+        tr.appendChild(td);
+      });
+      return tr;
+    }));
+  }
+
+  async function loadHealth() {
+    try {
+      const res = await fetch("/api/health");
+      const data = await res.json();
+      healthEl.textContent = `API : ${data.status} — base de données : ${data.database}`;
+    } catch {
+      healthEl.textContent = "API injoignable";
+    }
+  }
+
+  async function loadChecks() {
+    const res = await fetch("/api/checks");
+    if (res.ok) render(await res.json());
+  }
+
+  runBtn.addEventListener("click", async () => {
+    runBtn.disabled = true;
+    try {
+      await fetch("/api/checks", { method: "POST" });
+      await loadChecks();
+    } finally {
+      runBtn.disabled = false;
+    }
+  });
+
+  loadHealth();
+  loadChecks();
+</script>
+</body>
+</html>

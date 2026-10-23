@@ -1,0 +1,49 @@
+name: NetSecure image security
+
+on: [push, pull_request]
+
+env:
+  TRIVY_VERSION: "0.76.1"
+  # Empreinte SHA-256 officielle de trivy_0.76.1_Linux-64bit.tar.gz (fichier trivy_0.76.1_checksums.txt de la release)
+  TRIVY_SHA256: "c7cbe3137fb8a48a17574bede3dd6beb16742d1e9772929940fc90082c39d9c0"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, frontend]
+    steps:
+      # Action épinglée sur le SHA du commit de la v7.0.1 (et non sur un tag modifiable)
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build ${{ matrix.service }} image
+        run: docker build -t netsecure-${{ matrix.service }}:ci ./${{ matrix.service }}
+
+      # Installation depuis la release officielle, version fixée, empreinte vérifiée avant extraction
+      - name: Install Trivy
+        run: |
+          archive="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${archive}"
+          echo "${TRIVY_SHA256}  ${archive}" | sha256sum --check --strict
+          sudo tar -xzf "${archive}" -C /usr/local/bin trivy
+          trivy --version
+
+      - name: Scan image
+        run: trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-${{ matrix.service }}:ci
+
+      # # Rapport complet, informatif : ne bloque pas le pipeline
+      # - name: Report HIGH and CRITICAL vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 0 netsecure-${{ matrix.service }}:ci
+
+      # # Barrière 1 : aucune vulnérabilité CRITICAL tolérée, corrigeable ou non
+      # - name: Fail on CRITICAL vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity CRITICAL --exit-code 1 netsecure-${{ matrix.service }}:ci
+
+      # # Barrière 2 : aucune vulnérabilité HIGH pour laquelle un correctif existe
+      # - name: Fail on fixable HIGH vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity HIGH --ignore-unfixed --exit-code 1 netsecure-${{ matrix.service }}:ci
