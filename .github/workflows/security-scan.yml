@@ -33,14 +33,17 @@ jobs:
           sudo tar -xzf "${archive}" -C /usr/local/bin trivy
           trivy --version
 
-      # Rapport complet, informatif : ne bloque pas le pipeline
-      - name: Report HIGH and CRITICAL vulnerabilities
-        run: trivy image --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 0 netsecure-${{ matrix.service }}:ci
+      - name: Scan image
+        run: trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-api:ci
 
-      # Barrière 1 : aucune vulnérabilité CRITICAL tolérée, corrigeable ou non
-      - name: Fail on CRITICAL vulnerabilities
-        run: trivy image --scanners vuln --no-progress --severity CRITICAL --exit-code 1 netsecure-${{ matrix.service }}:ci
+      # # Rapport complet, informatif : ne bloque pas le pipeline
+      # - name: Report HIGH and CRITICAL vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity HIGH,CRITICAL --exit-code 0 netsecure-${{ matrix.service }}:ci
 
-      # Barrière 2 : aucune vulnérabilité HIGH pour laquelle un correctif existe
-      - name: Fail on fixable HIGH vulnerabilities
-        run: trivy image --scanners vuln --no-progress --severity HIGH --ignore-unfixed --exit-code 1 netsecure-${{ matrix.service }}:ci
+      # # Barrière 1 : aucune vulnérabilité CRITICAL tolérée, corrigeable ou non
+      # - name: Fail on CRITICAL vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity CRITICAL --exit-code 1 netsecure-${{ matrix.service }}:ci
+
+      # # Barrière 2 : aucune vulnérabilité HIGH pour laquelle un correctif existe
+      # - name: Fail on fixable HIGH vulnerabilities
+      #   run: trivy image --scanners vuln --no-progress --severity HIGH --ignore-unfixed --exit-code 1 netsecure-${{ matrix.service }}:ci
