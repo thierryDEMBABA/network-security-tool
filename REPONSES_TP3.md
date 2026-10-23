@@ -128,30 +128,55 @@ Workflow : [.github/workflows/security-scan.yml](.github/workflows/security-scan
 
 ### Fonctionnement
 
-Un job `scan` est lancé pour chaque image (matrice `api` / `frontend`) :
+Un job `scan` est lancé pour chaque service (matrice `api` / `frontend`, `fail-fast: false`) :
 
 | Étape | Rôle |
 |---|---|
 | `Checkout repository` | `actions/checkout` épinglée sur le **SHA de commit** de la v7.0.1, et non sur un tag qu'on peut déplacer |
 | `Build … image` | `docker build -t netsecure-<service>:ci ./<service>` |
 | `Install Trivy` | Téléchargement de la **release officielle 0.76.1** (version fixée), puis **vérification de l'empreinte SHA-256** publiée dans `trivy_0.76.1_checksums.txt` avant extraction. Si l'archive a été altérée, `sha256sum --check` échoue et le job s'arrête. |
-| `Report HIGH and CRITICAL vulnerabilities` | Rapport complet, `--exit-code 0` : informatif, ne bloque pas |
-| `Fail on CRITICAL vulnerabilities` | **Barrière 1** : `--severity CRITICAL --exit-code 1`. Aucune CRITICAL tolérée, qu'elle ait un correctif ou non |
-| `Fail on fixable HIGH vulnerabilities` | **Barrière 2** : `--severity HIGH --ignore-unfixed --exit-code 1`. Bloque toute HIGH pour laquelle un correctif existe |
+| `Scan image` | `trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-api:ci` : échoue dès qu'une vulnérabilité HIGH ou CRITICAL est trouvée |
 
-La permission `contents: read` applique le moindre privilège, et `fail-fast: false` permet d'obtenir le résultat des deux images même si l'une échoue.
+La permission `contents: read` applique le principe du moindre privilège.
 
-### Pourquoi deux barrières plutôt que `--exit-code 1 --severity HIGH,CRITICAL`
+### Résultat observé (run #1, commit `a6e6563`, push sur `feature/netsecure`)
 
-La commande proposée dans l'énoncé échouerait **en permanence** sur notre API durcie : il reste 44 HIGH dans le socle Debian, **et aucune n'a de correctif**. Un pipeline toujours rouge pour des problèmes qu'on ne peut pas corriger finit par être ignoré, ou désactivé.
+![Run du workflow en échec](assets/img/ci-trivy-run-echec.png)
 
-Notre politique bloque donc :
-- **toute CRITICAL**, parce que le risque est trop élevé : il faut changer d'image ou de composant ;
-- **toute HIGH corrigeable**, parce qu'il suffit de mettre à jour : il n'y a aucune raison de livrer.
+| Job | Étape en échec | Cause | Code de sortie |
+|---|---|---|---|
+| `scan (api)` | `Scan image` | Trivy trouve **44 vulnérabilités HIGH** (0 CRITICAL) dans `netsecure-api:ci` | 1 |
+| `scan (frontend)` | `Scan image` | La commande scanne `netsecure-api:ci`, alors que ce job n'a construit que `netsecure-frontend:ci`. Trivy ne trouve l'image ni dans Docker ni sur Docker Hub : `unable to find the specified image "netsecure-api:ci"` | 1 |
 
-Les HIGH sans correctif restent visibles dans le rapport, pour être surveillées.
+![Résumé du scan de l'API dans la CI](assets/img/ci-trivy-api-resume.png)
+![Détail du scan de l'API dans la CI : Total 44 (HIGH: 44, CRITICAL: 0)](assets/img/ci-trivy-api-detail.png)
 
-### Résultats attendus (simulés en local avec les mêmes commandes)
+Le résultat de la CI est **identique au scan local** de `netsecure-api:hardened` (44 HIGH, 0 CRITICAL, Debian 13.7). Le scan est donc reproductible.
+
+**Correction à apporter au job `frontend`** : chaque job de la matrice doit scanner l'image qu'il vient de construire, avec `netsecure-${{ matrix.service }}:ci` au lieu de `netsecure-api:ci`. En local, `netsecure-frontend:hardened` ne contient aucune vulnérabilité HIGH/CRITICAL : une fois cette correction faite, le job frontend passerait au vert.
+
+### Pourquoi un scan en échec bloque la suite du pipeline
+
+Quand Trivy trouve une vulnérabilité au niveau demandé, `--exit-code 1` le fait **terminer avec le code 1**, au lieu de 0 par défaut. GitHub Actions considère alors l'étape en échec :
+- les étapes suivantes du job ne sont pas exécutées (par exemple une étape de publication de l'image dans un registre, ou de déploiement) ;
+- le job, puis le run, passent au rouge ❌ ;
+- sur une Pull Request, le check échoue. Avec une règle de protection de branche (*Require status checks to pass before merging*), le merge vers `main` devient impossible.
+
+C'est ce qui transforme le scan en **barrière de sécurité** (*security gate*) : une image vulnérable ne peut pas être intégrée ni livrée sans décision explicite.
+
+### Limite de cette politique et amélioration proposée
+
+Les 44 HIGH restantes de l'API **n'ont aucun correctif disponible** (statut `affected`, colonne *Fixed Version* vide). Avec `--exit-code 1 --severity HIGH,CRITICAL`, le pipeline restera donc **rouge en permanence**, même si l'équipe ne peut rien corriger. Le risque : que le pipeline finisse par être ignoré, ou désactivé.
+
+Une politique plus exploitable, préparée en commentaire dans le workflow, sépare trois étapes :
+
+| Étape | Commande | Rôle |
+|---|---|---|
+| Rapport | `--severity HIGH,CRITICAL --exit-code 0` | Tout afficher, sans bloquer |
+| Barrière 1 | `--severity CRITICAL --exit-code 1` | Aucune CRITICAL tolérée, corrigeable ou non |
+| Barrière 2 | `--severity HIGH --ignore-unfixed --exit-code 1` | Bloquer toute HIGH pour laquelle un correctif existe |
+
+Simulation en local avec ces commandes :
 
 | Image | Barrière CRITICAL | Barrière HIGH corrigeables | Pipeline |
 |---|---|---|---|
@@ -159,12 +184,88 @@ Les HIGH sans correctif restent visibles dans le rapport, pour être surveillée
 | `netsecure-frontend:hardened` | exit 0 | exit 0 | ✅ |
 | `netsecure-api:dev` (image d'avant durcissement) | **exit 1** (24 CRITICAL) | exit 0 | ❌ |
 
-La politique aurait donc **bloqué l'image initiale** et **laisse passer l'image durcie**.
+Cette politique **bloque l'image initiale** et **accepte l'image durcie**, tout en laissant visibles les HIGH non corrigées, pour qu'elles soient surveillées.
 
-### Pourquoi un scan en échec bloque la suite du pipeline
+## Partie 5 — Questions d'analyse
 
-Quand Trivy trouve une vulnérabilité au niveau demandé, `--exit-code 1` le fait **terminer avec le code 1**. GitHub Actions considère alors l'étape en échec : les étapes suivantes du job ne sont pas exécutées, le job et le run passent au rouge, et le check de la Pull Request échoue. Avec une règle de protection de branche (*Require status checks to pass*), le merge vers `main` devient impossible. Une image vulnérable ne peut donc pas être intégrée, ni déployée par une étape ultérieure.
+### Q1. Différence entre scanner le code source et scanner une image Docker
 
-### Pourquoi le job réussit ici
+- **Scanner le code source (SAST)**, avec Bandit par exemple (TP 2), analyse **le code écrit par l'équipe** : injections, `eval`, secrets en dur, mauvaises pratiques. Il ne voit ni le système d'exploitation, ni les bibliothèques installées.
+- **Scanner une image Docker**, avec Trivy, analyse **tout ce qui sera réellement exécuté** : les paquets du système de base (Debian, Alpine), les bibliothèques installées par `pip` et leurs versions exactes, et éventuellement des secrets oubliés dans les couches. Il compare ces versions aux bases de CVE connues.
 
-Les images durcies ne contiennent **aucune CRITICAL** et **aucune HIGH corrigeable** : chaque commande Trivy se termine avec le code 0. Le job réussit **sans** que les images soient exemptes de vulnérabilités : 44 HIGH non corrigées restent présentes dans l'API. Elles sont affichées dans l'étape de rapport et doivent être réévaluées à chaque nouveau scan, car la base Trivy est mise à jour quotidiennement.
+Ici, le code de l'API ne présentait aucun problème, et ses dépendances Python aucune CVE. Pourtant, l'image initiale contenait 458 vulnérabilités, toutes dans les paquets système. Seul le scan d'image pouvait les détecter. Les deux contrôles sont complémentaires.
+
+### Q2. Différence entre un port exposé et un port publié sur l'hôte
+
+- **Port exposé** (`EXPOSE` dans le Dockerfile, `expose:` dans Compose) : c'est de la **documentation**. Il indique sur quel port le service écoute, et le service reste joignable **uniquement par les autres conteneurs du même réseau Docker** (par exemple `api:5000` depuis Nginx). Rien n'est ouvert sur la machine hôte.
+- **Port publié** (`ports: "8080:8080"`, ou `-p`) : Docker crée une **redirection depuis un port de l'hôte** vers le conteneur. Le service devient joignable depuis la machine, et même depuis le réseau local si l'adresse d'écoute est `0.0.0.0`.
+
+Dans NetSecure, seul le frontend est publié (`127.0.0.1:8080`). L'API (5000) et la base (5432) sont seulement exposées. `docker compose ps` affiche `5000/tcp` pour un port exposé, et `0.0.0.0:5000->5000/tcp` pour un port publié.
+
+### Q3. Pourquoi isoler une base de données sur le réseau backend
+
+- **Réduire la surface d'attaque** : seule l'API a besoin de la base. Le frontend, qui est exposé, n'a aucune route vers elle. Si Nginx est compromis, l'attaquant ne peut pas joindre PostgreSQL directement.
+- **Segmentation et défense en profondeur** : pour atteindre les données, un attaquant doit compromettre successivement le frontend, puis l'API. C'est le même principe qu'une DMZ.
+- **Aucune exposition externe** : sans port publié, la base n'est joignable ni depuis l'hôte, ni depuis le réseau local. Cela empêche les attaques par force brute sur le mot de passe, ou l'exploitation directe d'une CVE de PostgreSQL.
+- **Pas de sortie vers Internet** (`internal: true`) : même compromise, la base ne peut pas exfiltrer de données ni télécharger d'outils.
+
+### Q4. Quel risque présente un conteneur exécuté en root
+
+Par défaut, l'utilisateur `root` du conteneur est **le même uid 0 que le root de l'hôte**. Seules les isolations du noyau (namespaces, capacités, seccomp) l'en séparent. Si l'application est compromise, par exemple par une RCE dans une dépendance :
+- l'attaquant a **tous les droits dans le conteneur** : il peut modifier le code, installer des outils, lire tous les fichiers et secrets montés ;
+- une **évasion de conteneur** (faille du noyau ou du runtime, volume sensible monté, `docker.sock` partagé, mode `--privileged`) lui donne **directement root sur l'hôte** ;
+- il dispose de capacités Linux étendues (`CHOWN`, `NET_RAW`…), utiles pour attaquer le réseau interne.
+
+C'est pourquoi l'API tourne sous `app` (uid 10001) et Nginx sous `nginx` (uid 101), avec `cap_drop: ALL`, `no-new-privileges` et un système de fichiers en lecture seule.
+
+### Q5. Que signifient HIGH, CRITICAL, CVE et version corrigée
+
+- **CVE** (*Common Vulnerabilities and Exposures*) : un **identifiant unique** attribué à une vulnérabilité publique (par exemple `CVE-2026-49261`). Il permet à tous les outils et éditeurs de parler de la même faille.
+- **HIGH / CRITICAL** : des **niveaux de gravité**, généralement issus du score **CVSS** (0 à 10) :
+  - **CRITICAL** (9,0 à 10) : exploitable à distance, souvent sans authentification, avec un impact majeur (exécution de code, prise de contrôle) ;
+  - **HIGH** (7,0 à 8,9) : impact important, mais avec des conditions d'exploitation plus restrictives (accès local, interaction de l'utilisateur…).
+
+  Viennent ensuite MEDIUM, LOW et UNKNOWN.
+- **Version corrigée** (*Fixed Version*) : la **première version du paquet qui corrige la faille**. Si elle est indiquée, il suffit de mettre à jour. Si elle est vide (statut `affected`, `fix_deferred` ou `will_not_fix`), aucun correctif n'est disponible pour cette distribution : il faut retirer le composant, changer d'image, ou accepter le risque et le surveiller.
+
+### Q6. Que fait `--exit-code 1` et pourquoi l'utiliser en CI
+
+Par défaut, Trivy **termine toujours avec le code 0**, même s'il trouve des vulnérabilités : il se contente de les afficher. Avec `--exit-code 1`, il termine avec le **code 1 dès qu'il trouve une vulnérabilité au niveau de sévérité demandé**.
+
+En CI, c'est indispensable, car un pipeline ne lit pas les rapports : **il ne regarde que les codes de sortie**. Sans cette option, le job resterait vert quel que soit le résultat, et le scan serait purement décoratif. Avec elle, le scan devient une **barrière automatique** : l'étape échoue, le pipeline s'arrête, et la Pull Request est bloquée. C'est ce qu'on a observé : 44 HIGH, donc exit 1, donc job rouge.
+
+### Q7. Pourquoi une image sans CVE détectée n'est pas nécessairement sûre
+
+- **Trivy ne connaît que les vulnérabilités publiées** : les failles *zero-day*, ou celles pas encore référencées, sont invisibles (exemple : l'avertissement `CVE-2026-107891`, sans détails, dans notre scan du frontend).
+- **Il ne voit pas les failles de l'application elle-même** : injection SQL, contrôle d'accès absent, logique métier défaillante. C'est le rôle du SAST, du DAST et de la revue de code.
+- **Il ne voit pas la configuration d'exécution** : une image « propre » lancée en `--privileged`, en root, avec des ports publiés inutilement ou des secrets en clair dans les variables reste dangereuse.
+- **Le résultat est daté** : une image saine aujourd'hui peut avoir des CVE critiques demain, quand de nouvelles failles sont publiées.
+- **La détection a des limites** : binaires copiés à la main, dépendances embarquées dans d'autres paquets, distributions mal reconnues… Certains composants peuvent échapper à l'inventaire.
+
+« 0 CVE détectée » signifie « aucune vulnérabilité **connue** dans les composants **identifiés** ». Ce n'est pas la même chose que « sûr ».
+
+### Q8. Quels risques subsistent après la mise à jour des dépendances
+
+- **Les vulnérabilités sans correctif** : nos 44 HIGH restent présentes tant que Debian ne publie pas de correctif.
+- **Les régressions** : une nouvelle version peut casser l'application, ou changer un comportement (API modifiée, configuration par défaut différente). D'où l'importance des tests en CI.
+- **Les nouvelles vulnérabilités** introduites par la nouvelle version elle-même.
+- **Les attaques de la chaîne d'approvisionnement** : un paquet ou une image compromise à la source, une action GitHub modifiée, un *typosquatting*. Pour limiter ce risque : épingler les versions, vérifier les empreintes (comme pour Trivy) et épingler les actions par SHA.
+- **Les failles du code applicatif et de la configuration**, que la mise à jour des dépendances ne corrige pas.
+- **Les dépendances transitives** : une bibliothèque à jour peut tirer une sous-dépendance vulnérable.
+- **La dérive dans le temps** : sans scan régulier, l'image vieillit et redevient vulnérable. Il faut reconstruire et rescanner périodiquement, pas seulement lors d'un push.
+
+## Livrables
+
+| Livrable | Lien / fichier |
+|---|---|
+| Dépôt NetSecure | https://github.com/thierryDEMBABA/network-security-tool (branche `feature/netsecure`) |
+| Dockerfiles mis à jour | [api/Dockerfile](api/Dockerfile), [frontend/Dockerfile](frontend/Dockerfile) (+ [frontend/nginx.conf](frontend/nginx.conf)) |
+| Compose mis à jour | [compose.yaml](compose.yaml) |
+| Fichier workflow | [.github/workflows/security-scan.yml](.github/workflows/security-scan.yml) |
+| Résultats Trivy avant | [trivy-api-avant-resume.png](assets/img/trivy-api-avant-resume.png), [trivy-api-avant-detail.png](assets/img/trivy-api-avant-detail.png), [trivy-frontend-avant.png](assets/img/trivy-frontend-avant.png), [docs/trivy/api-avant.txt](docs/trivy/api-avant.txt) |
+| Résultats Trivy après | [trivy-api-apres-resume.png](assets/img/trivy-api-apres-resume.png), [trivy-api-apres-detail.png](assets/img/trivy-api-apres-detail.png), [trivy-frontend-apres.png](assets/img/trivy-frontend-apres.png), [docs/trivy/api-apres.txt](docs/trivy/api-apres.txt), [docs/trivy/frontend-apres.txt](docs/trivy/frontend-apres.txt) |
+| Résultats du pipeline CI | [ci-trivy-run-echec.png](assets/img/ci-trivy-run-echec.png), [ci-trivy-api-resume.png](assets/img/ci-trivy-api-resume.png), [ci-trivy-api-detail.png](assets/img/ci-trivy-api-detail.png) |
+| Analyse des changements | Partie 3 de ce document |
+| Réponses aux huit questions | Partie 5 de ce document |
+
+Aucun mot de passe ni jeton n'est versionné : les identifiants de la base sont dans `.env`, ignoré par Git. Seul [.env.example](.env.example), avec des valeurs factices, est publié.
