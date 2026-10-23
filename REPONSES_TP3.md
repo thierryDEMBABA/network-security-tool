@@ -1,5 +1,21 @@
 # TP 3 — NetSecure : audit de sécurité Docker avec Trivy
 
+## Livrables
+
+| Livrable | Lien / fichier |
+|---|---|
+| Dépôt NetSecure | https://github.com/thierryDEMBABA/network-security-tool (branche `feature/netsecure`) |
+| Dockerfiles mis à jour | [api/Dockerfile](api/Dockerfile), [frontend/Dockerfile](frontend/Dockerfile) (+ [frontend/nginx.conf](frontend/nginx.conf)) |
+| Compose mis à jour | [compose.yaml](compose.yaml) |
+| Fichier workflow | [.github/workflows/security-scan.yml](.github/workflows/security-scan.yml) |
+| Résultats Trivy avant | [trivy-api-avant-resume.png](assets/img/trivy-api-avant-resume.png), [trivy-api-avant-detail.png](assets/img/trivy-api-avant-detail.png), [trivy-frontend-avant.png](assets/img/trivy-frontend-avant.png), [docs/trivy/api-avant.txt](docs/trivy/api-avant.txt) |
+| Résultats Trivy après | [trivy-api-apres-resume.png](assets/img/trivy-api-apres-resume.png), [trivy-api-apres-detail.png](assets/img/trivy-api-apres-detail.png), [trivy-frontend-apres.png](assets/img/trivy-frontend-apres.png), [docs/trivy/api-apres.txt](docs/trivy/api-apres.txt), [docs/trivy/frontend-apres.txt](docs/trivy/frontend-apres.txt) |
+| Résultats du pipeline CI | [ci-trivy-run-echec.png](assets/img/ci-trivy-run-echec.png), [ci-trivy-api-resume.png](assets/img/ci-trivy-api-resume.png), [ci-trivy-api-detail.png](assets/img/ci-trivy-api-detail.png), [ci-trivy-frontend-succes.png](assets/img/ci-trivy-frontend-succes.png), [ci-trivy-api-exit-code.png](assets/img/ci-trivy-api-exit-code.png) |
+| Analyse des changements | Partie 3 de ce document |
+| Réponses aux huit questions | Partie 5 de ce document |
+
+Aucun mot de passe ni jeton n'est versionné : les identifiants de la base sont dans `.env`, ignoré par Git. Seul [.env.example](.env.example), avec des valeurs factices, est publié.
+
 Outil utilisé : **Trivy 0.76.1**, lancé via son image Docker officielle (version épinglée) :
 
 ```bash
@@ -269,19 +285,3 @@ En CI, c'est indispensable, car un pipeline ne lit pas les rapports : **il ne re
 - **Les failles du code applicatif et de la configuration**, que la mise à jour des dépendances ne corrige pas.
 - **Les dépendances transitives** : une bibliothèque à jour peut tirer une sous-dépendance vulnérable.
 - **La dérive dans le temps** : sans scan régulier, l'image vieillit et redevient vulnérable. Il faut reconstruire et rescanner périodiquement, pas seulement lors d'un push.
-
-## Livrables
-
-| Livrable | Lien / fichier |
-|---|---|
-| Dépôt NetSecure | https://github.com/thierryDEMBABA/network-security-tool (branche `feature/netsecure`) |
-| Dockerfiles mis à jour | [api/Dockerfile](api/Dockerfile), [frontend/Dockerfile](frontend/Dockerfile) (+ [frontend/nginx.conf](frontend/nginx.conf)) |
-| Compose mis à jour | [compose.yaml](compose.yaml) |
-| Fichier workflow | [.github/workflows/security-scan.yml](.github/workflows/security-scan.yml) |
-| Résultats Trivy avant | [trivy-api-avant-resume.png](assets/img/trivy-api-avant-resume.png), [trivy-api-avant-detail.png](assets/img/trivy-api-avant-detail.png), [trivy-frontend-avant.png](assets/img/trivy-frontend-avant.png), [docs/trivy/api-avant.txt](docs/trivy/api-avant.txt) |
-| Résultats Trivy après | [trivy-api-apres-resume.png](assets/img/trivy-api-apres-resume.png), [trivy-api-apres-detail.png](assets/img/trivy-api-apres-detail.png), [trivy-frontend-apres.png](assets/img/trivy-frontend-apres.png), [docs/trivy/api-apres.txt](docs/trivy/api-apres.txt), [docs/trivy/frontend-apres.txt](docs/trivy/frontend-apres.txt) |
-| Résultats du pipeline CI | [ci-trivy-run-echec.png](assets/img/ci-trivy-run-echec.png), [ci-trivy-api-resume.png](assets/img/ci-trivy-api-resume.png), [ci-trivy-api-detail.png](assets/img/ci-trivy-api-detail.png), [ci-trivy-frontend-succes.png](assets/img/ci-trivy-frontend-succes.png), [ci-trivy-api-exit-code.png](assets/img/ci-trivy-api-exit-code.png) |
-| Analyse des changements | Partie 3 de ce document |
-| Réponses aux huit questions | Partie 5 de ce document |
-
-Aucun mot de passe ni jeton n'est versionné : les identifiants de la base sont dans `.env`, ignoré par Git. Seul [.env.example](.env.example), avec des valeurs factices, est publié.
