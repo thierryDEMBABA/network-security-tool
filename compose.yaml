@@ -1,26 +1,52 @@
 name: netsecure
 
+# Options de durcissement communes
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  restart: unless-stopped
+
 services:
   frontend:
+    <<: *hardening
     build: ./frontend
-    image: netsecure-frontend:dev
+    image: netsecure-frontend:hardened
+    # Seul point d'entrée publié, limité à l'hôte local
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - frontend
 
   api:
+    <<: *hardening
     build: ./api
-    image: netsecure-api:dev
+    image: netsecure-api:hardened
     env_file: .env
     environment:
       DB_HOST: db
-      TARGETS: "api=api:5000,db=db:5432,frontend=frontend:80"
+      TARGETS: "api=api:5000,db=db:5432,frontend=frontend:8080"
     # Pas de "ports:" : l'API n'est joignable que via le réseau Docker (Nginx en reverse proxy)
     expose:
       - "5000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     depends_on:
       db:
         condition: service_healthy
@@ -29,12 +55,26 @@ services:
       - backend
 
   db:
-    image: postgres:16
+    <<: *hardening
+    image: postgres:16-alpine
     env_file: .env
-    ports:
-      - "5432:5432"
+    # Pas de "ports:" : la base n'est joignable que par l'API sur le réseau backend
+    expose:
+      - "5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    # L'entrypoint Postgres a besoin de ces capacités pour préparer le volume puis passer en utilisateur postgres
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -46,6 +86,8 @@ services:
 networks:
   frontend:
   backend:
+    # Réseau interne : aucune route vers l'extérieur
+    internal: true
 
 volumes:
   db-data:
