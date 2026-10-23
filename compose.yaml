@@ -18,8 +18,9 @@ services:
     environment:
       DB_HOST: db
       TARGETS: "api=api:5000,db=db:5432,frontend=frontend:80"
-    ports:
-      - "5000:5000"
+    # Pas de "ports:" : l'API n'est joignable que via le réseau Docker (Nginx en reverse proxy)
+    expose:
+      - "5000"
     depends_on:
       db:
         condition: service_healthy
