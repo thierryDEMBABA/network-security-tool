@@ -121,3 +121,50 @@ Pendant ce scan, Trivy affiche deux avertissements `Unable to get vulnerability 
 | Écriture dans `/app` (API) ou `/etc/nginx` (frontend) | ❌ `Read-only file system` |
 | Capacités effectives de l'API | `CapEff: 0000000000000000` (aucune) |
 | Accès Internet depuis `db` (réseau `backend`) | ❌ aucune résolution DNS externe |
+
+## Partie 4 — Contrôle Trivy dans le pipeline CI
+
+Workflow : [.github/workflows/security-scan.yml](.github/workflows/security-scan.yml), déclenché à chaque `push` et `pull_request`.
+
+### Fonctionnement
+
+Un job `scan` est lancé pour chaque image (matrice `api` / `frontend`) :
+
+| Étape | Rôle |
+|---|---|
+| `Checkout repository` | `actions/checkout` épinglée sur le **SHA de commit** de la v7.0.1, et non sur un tag qu'on peut déplacer |
+| `Build … image` | `docker build -t netsecure-<service>:ci ./<service>` |
+| `Install Trivy` | Téléchargement de la **release officielle 0.76.1** (version fixée), puis **vérification de l'empreinte SHA-256** publiée dans `trivy_0.76.1_checksums.txt` avant extraction. Si l'archive a été altérée, `sha256sum --check` échoue et le job s'arrête. |
+| `Report HIGH and CRITICAL vulnerabilities` | Rapport complet, `--exit-code 0` : informatif, ne bloque pas |
+| `Fail on CRITICAL vulnerabilities` | **Barrière 1** : `--severity CRITICAL --exit-code 1`. Aucune CRITICAL tolérée, qu'elle ait un correctif ou non |
+| `Fail on fixable HIGH vulnerabilities` | **Barrière 2** : `--severity HIGH --ignore-unfixed --exit-code 1`. Bloque toute HIGH pour laquelle un correctif existe |
+
+La permission `contents: read` applique le moindre privilège, et `fail-fast: false` permet d'obtenir le résultat des deux images même si l'une échoue.
+
+### Pourquoi deux barrières plutôt que `--exit-code 1 --severity HIGH,CRITICAL`
+
+La commande proposée dans l'énoncé échouerait **en permanence** sur notre API durcie : il reste 44 HIGH dans le socle Debian, **et aucune n'a de correctif**. Un pipeline toujours rouge pour des problèmes qu'on ne peut pas corriger finit par être ignoré, ou désactivé.
+
+Notre politique bloque donc :
+- **toute CRITICAL**, parce que le risque est trop élevé : il faut changer d'image ou de composant ;
+- **toute HIGH corrigeable**, parce qu'il suffit de mettre à jour : il n'y a aucune raison de livrer.
+
+Les HIGH sans correctif restent visibles dans le rapport, pour être surveillées.
+
+### Résultats attendus (simulés en local avec les mêmes commandes)
+
+| Image | Barrière CRITICAL | Barrière HIGH corrigeables | Pipeline |
+|---|---|---|---|
+| `netsecure-api:hardened` | exit 0 | exit 0 | ✅ |
+| `netsecure-frontend:hardened` | exit 0 | exit 0 | ✅ |
+| `netsecure-api:dev` (image d'avant durcissement) | **exit 1** (24 CRITICAL) | exit 0 | ❌ |
+
+La politique aurait donc **bloqué l'image initiale** et **laisse passer l'image durcie**.
+
+### Pourquoi un scan en échec bloque la suite du pipeline
+
+Quand Trivy trouve une vulnérabilité au niveau demandé, `--exit-code 1` le fait **terminer avec le code 1**. GitHub Actions considère alors l'étape en échec : les étapes suivantes du job ne sont pas exécutées, le job et le run passent au rouge, et le check de la Pull Request échoue. Avec une règle de protection de branche (*Require status checks to pass*), le merge vers `main` devient impossible. Une image vulnérable ne peut donc pas être intégrée, ni déployée par une étape ultérieure.
+
+### Pourquoi le job réussit ici
+
+Les images durcies ne contiennent **aucune CRITICAL** et **aucune HIGH corrigeable** : chaque commande Trivy se termine avec le code 0. Le job réussit **sans** que les images soient exemptes de vulnérabilités : 44 HIGH non corrigées restent présentes dans l'API. Elles sont affichées dans l'étape de rapport et doivent être réévaluées à chaque nouveau scan, car la base Trivy est mise à jour quotidiennement.
