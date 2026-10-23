@@ -34,7 +34,7 @@ jobs:
           trivy --version
 
       - name: Scan image
-        run: trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-api:ci
+        run: trivy image --exit-code 1 --severity HIGH,CRITICAL netsecure-${{ matrix.service }}:ci
 
       # # Rapport complet, informatif : ne bloque pas le pipeline
       # - name: Report HIGH and CRITICAL vulnerabilities
